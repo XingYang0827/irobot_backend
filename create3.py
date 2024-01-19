@@ -1,82 +1,73 @@
 #
-# Licensed under 3-Clause BSD license available in the License file. Copyright (c) 2020-2022 iRobot Corporation. All rights reserved.
+# Licensed under 3-Clause BSD license available in the License file. Copyright (c) 2020-2024 iRobot Corporation. All rights reserved.
 #
 
 import math
-from typing import Union
+from enum import IntEnum, IntFlag
+from typing import Union, Callable, Awaitable, List
 from struct import pack, unpack
 from .backend.backend import Backend
+from .event import Event
 from .completer import Completer
 from .packet import Packet
-from .utils import bound, stop_program
-from .getter_types import IPv4Addresses, IrProximity, Pose
-from irobot_edu_sdk.robot import Robot
-import queue
-from irobot_edu_sdk.music import Note
+from .utils import bound
+from .getter_types import IPv4Addresses, IrProximity, Pose, DockingSensor
+from .robot import Robot
 
 
 class Create3(Robot):
     """Create 3 robot object."""
 
-    DOCK_STATUS_SUCCEEDED = 0
-    DOCK_STATUS_ABORTED   = 1
-    DOCK_STATUS_CANCELED  = 2
-    DOCK_RESULT_UNDOCKED = 0
-    DOCK_RESULT_DOCKED   = 1
-    
-    DIR = [0,1,0,-1,0]
-    UNIT_LENGTH = 20
+    class DockStatus(IntEnum):
+        SUCCEEDED = 0
+        ABORTED   = 1
+        CANCELED  = 2
 
-    # class variable
-    position_record = [0,0]
-    heading_record = 0
+    class DockResult(IntEnum):
+        UNDOCKED = 0
+        DOCKED   = 1
+
 
     def __init__(self, backend: Backend):
         super().__init__(backend=backend)
 
+        self._events[(19, 0)] = self._when_docking_sensor_handler
+
+        self._when_docking_sensor: list[Event] = []
+
         # Getters.
         self.ipv4_address = IPv4Addresses()
+        self.docking_sensor = DockingSensor()
 
-        # #update position and heading -- read from a text file containing three numbers -- first two for position and third for heading
-        # output = readData('odometryData.txt') #may need to update file name later
-        # self.position[0] = int(output[0])
-        # self.position[1] = int(output[1])
-        # self.heading = int(output[2])
-
-    @classmethod
-    def update_position_record(cls, new_x, new_y):
-        cls.position_record = [new_x, new_y]
-    
-    @classmethod
-    def update_heading_record(cls, new_heading):
-        cls.heading_record = new_heading
-    
-
-    # #file manipulation functions
-    # def clearData(file_path):   #makes text file empty -- necessary for overriding contents
-    #     with open(file_path, 'w') as file:
-    #         file.write('')
-
-    # def writeData(file_path, data):  #adds contents to text file via appending
-    #     with open(file_path, 'a') as file:
-    #         file.write(data)
-
-    # def readData(file_path):  #stores every line in the text file as an element in a list
-    #     with open(file_path, 'r') as file:
-    #         data = file.readlines()
-    #         return data
-            
-    # def updateOdometry():
-    #     clearData('odometryData.txt')
-    #     data = [self.position[0], self.position[1], self.heading]
-    #     for i in data:
-    #         writeData('odometryData.txt', str(i) + '\n')
+        # Use Create 3 robot's internal position estimate
+        self.USE_ROBOT_POSE = True
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
         pass
+
+    # Event Handlers.
+
+    async def _when_docking_sensor_handler(self, packet):
+        if len(packet.payload) > 4:
+            self.docking_sensor.contacts = packet.payload[4] != 0
+            self.docking_sensor.sensors = (packet.payload[5],
+                                           packet.payload[6],
+                                           packet.payload[7])
+
+            for event in self._when_docking_sensor:
+                # TODO: Generate triggers instead of just firing for any event
+                # TODO: Define dock sensor Enum
+                await event.run(self)
+
+    # Event Callbacks.
+
+    def when_docking_sensor(self, callback: Callable[[bool], Awaitable[None]]):
+        self._when_docking_sensor.append(Event(True, callback))
+
+    # Commands.
 
     async def get_ipv4_address(self) -> IPv4Addresses:
         """Get the robot's ipv4 address as a IPv4Addresses, which contains wlan0, wlan1 and usb0. Returns None if anything went wrong."""
@@ -92,7 +83,8 @@ class Create3(Robot):
             return self.ipv4_address
         return None
 
-    async def get_ir_proximity(self):
+    async def get_6x_ir_proximity(self):
+        """Get Original IR Proximity Values and States"""
         dev, cmd, inc = 11, 1, self.inc
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
@@ -106,6 +98,11 @@ class Create3(Robot):
         return None
 
     async def get_packed_ir_proximity(self):
+        """DEPRECATED function for new Get IR Proximity Values and States"""
+        print('Warning: get_packed_ir_proximity() has been deprecated, please use get_ir_proximity() instead')
+        await self.get_7x_ir_proximity()
+
+    async def get_7x_ir_proximity(self):
         """Get Packed IR Proximity Values and States"""
         dev, cmd, inc = 11, 2, self.inc
         completer = Completer()
@@ -129,23 +126,19 @@ class Create3(Robot):
             return ir_proximity
         return None
 
-    async def get_position(self):
-        dev, cmd, inc = 1, 16, self.inc
-        completer = Completer()
-        self._responses[(dev, cmd, inc)] = completer
-        await self._backend.write_packet(Packet(dev, cmd, inc))
-        packet = await completer.wait(self.DEFAULT_TIMEOUT)
-        if packet:
-            payload = packet.payload
-            timestamp = unpack('>I', payload[0:4])[0]
-            x = unpack('>i', payload[4:8])[0]
-            y = unpack('>i', payload[8:12])[0]
-            heading = unpack('>h', payload[12:14])[0] / 10
-            return Pose(x, y, heading)
-        return None
+    async def get_ir_proximity(self):
+        """Version-Agnostic Get IR Proximity Values and States"""
+        ir_prox = await self.get_7x_ir_proximity()
+        if ir_prox is not None:
+            return ir_prox
 
-    async def reset_navigation(self):
-        await self._backend.write_packet(Packet(1, 15, self.inc))
+        ir_prox = await self.get_6x_ir_proximity()
+        if ir_prox is not None:
+            print('Warning: ir_prox() missing seventh value; you may need to update your robot')
+            ir_prox.sensors.append(float('nan'))
+            return ir_prox
+
+        return None
 
     async def navigate_to(self, x: Union[int, float], y: Union[int, float], heading: Union[int, float] = None):
         """ If heading is None, then it will be ignored, and the robot will arrive to its destination
@@ -154,6 +147,7 @@ class Create3(Robot):
             x, y: cm
             heading: deg
         """
+
         if self._disable_motors:
             return
         dev, cmd, inc = 1, 17, self.inc
@@ -166,225 +160,16 @@ class Create3(Robot):
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(Packet(dev, cmd, inc, payload))
         timeout = self.DEFAULT_TIMEOUT + int(math.sqrt(x * x + y * y) / 10) + 4  # 4 is the timeout for a potential rotation.
-        await completer.wait(timeout)
-        
-    #==================== sound action mapping ====================#
-    ### explanation: Define different sounds for different actions of the robot.
-    async def play_sound(self, action):
-        try:
-            if action == 'start_move':
-                await super().play_note(Note.A4, 0.5)
-            elif action == 'stop_move':
-                await super().play_note(Note.A4_SHARP, 0.5)
-            elif action == 'dock':
-                await super().play_note(Note.C4, 0.5)
-            elif action == 'undock':
-                await super().play_note(Note.C4_SHARP, 0.5)
-        except Exception as e:
-            print("Error when playing sound:", e)
-        
-    #==================== fixed_map_navigate_to function ====================#
-    #***************** helper functions *****************#
-
-    ############# get path #############
-    ### explaination: room_map now has "B" in places that are blocked and integers in places can be arrived showing the steps from the point to the origin.
-    ###               The target position will have the largest integer on the map.
-    ###               get_path function back trace the numbers in descending order until find a 0, ie, start point.
-    ###               path list reverse itself after the back trace to get correct sequence of paths that robot will want to follow.
-
-    def get_path(self, room_map, start, target):
-
-        # helper function to optimize path
-        ### explanation: merge two coordinates if they are in the same line
-        def merge_path(path):
-            try:
-                merged_path = []
-                i = 0
-                same_x = True
-                same_y = True
-                while i < len(path):
-                    cur_coordinate = path[i]
-                    next_coordinate = path[i+1] if i+1 < len(path) else None
-
-                    # if in the same line consistently, check next element
-                    if same_x and next_coordinate and cur_coordinate[0] == next_coordinate[0]:
-                        same_y = False
-                    elif same_y and next_coordinate and cur_coordinate[1] == next_coordinate[1]:
-                        same_x = False
-                    else:
-                        # add the last element on the line to merged list
-                        merged_path.append(cur_coordinate)
-                        same_x = True
-                        same_y = True
-                    i += 1
-
-                return merged_path
-            except Exception as e:
-                print("Error when merging path:", e)
-
-        try:
-            # Define an empty path and append the target position
-            path = []
-            cur_pos = start
-            path.append(cur_pos)
-
-            # Search for numbers in descending order on map until find start position
-            while (cur_pos != target):
-                for i in range (0, 4):
-                    prev_pos = [cur_pos[0]-self.DIR[i], cur_pos[1]-self.DIR[i+1]]
-                    # print(room_map[prev_pos[0]][prev_pos[1]], room_map[cur_pos[0]][cur_pos[1]]) # For debug purpose
-                    if prev_pos[0]<0 or prev_pos[0]>=len(room_map) or prev_pos[1]<0 or prev_pos[1]>=len(room_map[0]):
-                        continue
-                    if str(room_map[prev_pos[0]][prev_pos[1]]).isdigit() and room_map[prev_pos[0]][prev_pos[1]] == room_map[cur_pos[0]][cur_pos[1]]-1:
-                        # add position that matches standard to the list
-                        path.append(prev_pos)
-                        break
-                cur_pos = prev_pos
-
-            print("Complete path: ", path)
-            return merge_path(path)
-        
-        except Exception as e:
-            print("Error when get path:", e)
-
-
-    ############# BFS #############
-    ### explanation: Find and return the shortest path the robot can follow from one point to another
-    ###              exit(1) if robot cannot get to the target place
-
-    def BFS(self, room_map, start, target):
-        try:
-            # If start and target are the same place, no need to move
-            if (start == target):
-                return
-
-            # BFS
-            my_queue = queue.Queue()
-            my_queue.put(target)
-            room_map[target[0]][target[1]] = 0
-
-            # Process elements in the queue until it becomes empty
-            while not my_queue.empty():
-                # Get the current position from the front of the queue
-                cur_pos = my_queue.get()
-                # record and return the valid path
-                if (cur_pos == start):
-                    return self.get_path(room_map, start, target)
-                
-                # Update map to find path
-                for i in range(0,4):
-                    next_pos = [cur_pos[0]+self.DIR[i], cur_pos[1]+self.DIR[i+1]]
-                    if next_pos[0]<0 or next_pos[0]>=len(room_map) or next_pos[1]<0 or next_pos[1]>=len(room_map[0]):
-                        continue
-                    if room_map[next_pos[0]][next_pos[1]] == 'B':
-                        continue
-                    if str(room_map[next_pos[0]][next_pos[1]]).isdigit():
-                        room_map[next_pos[0]][next_pos[1]] = min(room_map[next_pos[0]][next_pos[1]], room_map[cur_pos[0]][cur_pos[1]]+1)
-                        continue
-                    room_map[next_pos[0]][next_pos[1]] = room_map[cur_pos[0]][cur_pos[1]]+1
-                    my_queue.put(next_pos)
-            
-            # Not find valid path and exit with error
-            print("Cannot find a path to the target point")
-            exit(1)
-        except Exception as e:
-            print("Error when BFS:", e)
-
-    
-    #==================== update_positional_status function ====================#
-    def update_positional_status(self, current, target):
-        heading = self.heading_record
-        #update heading
-        if target[1] - current[1] > 0: #moved north
-            return
-        elif target[1] - current[1] < 0: #moved south
-            heading += 180
-        elif target[0] - current[0] > 0: #moved east
-            heading += 90
-        elif target[0] - current[0] < 0: #moced west
-            heading -= 90
-        
-        heading %= 360
-        self.update_heading_record(heading)
-        self.update_position_record(target)
-    
-    #==================== face_to function ====================#
-    def face_to(self, target_dir):
-        # map possible directions
-        if target_dir.lower() == 'north':
-            target_dir = 0
-        elif target_dir.lower() == 'south':
-            target_dir = 180
-        elif target_dir.lower() == 'east':
-            target_dir = 90
+        packet = await completer.wait(timeout)
+        if self.USE_ROBOT_POSE and packet:
+            return self.pose.set_from_packet(packet)
         else:
-            target_dir = 270
-        
-        # calculate angles to rotate
-        angles_to_rotate = target_dir - self.heading_record
-        self.rotate_angle(angles_to_rotate)
+            if heading is not None:
+                self.pose.set(x, y, heading)
+            else:
+                self.pose.set(x, y, math.degrees(math.atan2(y - self.pose.y, x - self.pose.x)) + self.pose.heading)
 
-        # update self.heading
-        self.heading_record += target_dir
-        self.heading_record %= 360
-    
-    ############# main body of robot navigation action #############
-    ### explanation: robot mainly follow the actions in this function when fixed_map_navigate_to function is called
-    # action 1: Call BFS to find the optimal path
-    # action 2: Play sound to show the robot starts moving
-    # action 3: Follow the optimal path by using robot.navigate_to function (length between two points is defined by unit_length)
-    # action 4: Play sound to show the robot finishes moving
-    # action 5: Print "Navigation completed!"
-
-    async def fixed_map_navigate_to(self, room_map, target):
-        try:
-            # action 1
-            cur_pos = await self.get_position()
-            start = [cur_pos.x, cur_pos.y]
-            path = self.BFS(room_map, start, target)
-            print ("Path: ", path)
-
-            # action 2
-            await self.play_sound('start_move')
-
-            # action 3
-            for i in range (0,len(path)):
-                x = path[i][0]
-                y = path[i][1]
-                await self.navigate_to(x*self.UNIT_LENGTH, y*self.UNIT_LENGTH, heading = None)
-                self.update_position_record(path[i])
-
-            # action 4
-            await self.play_sound('stop_move')
-
-            # action 5
-            print("Navigation completed!")
-        except Exception as e:
-            print("Error when navigating:", e)
-
-
-    #==================== drive_distance function ====================#
-    async def drive_distance(self, meters: Union[float, int] , speed:[float, int]):
-        self.update_position_record([self.position_record[0]+self.position_record[0]*math.cos(self.heading_record), self.position_record[1]+self.position_record[1]*math.cos(self.heading_record)])
-        # self.position_record[0] += math.cos(self.heading_record)
-        # self.position_record[1] += math.sin(self.heading_record)
-        centimeters = meters*100
-        motor_speed = speed*5
-        await super().set_wheel_speeds(motor_speed, motor_speed)
-        await super().move(centimeters)
-
-    #==================== rotate_angle function ====================#
-    async def rotate_angle(self, degrees: Union[float, int], rotation_speed: Union[float, int]):
-        new_heading = self.heading_record
-        new_heading += degrees
-        new_heading %= 360
-        self.update_heading_record(new_heading)
-        motor_speed = rotation_speed*5
-        if (degrees >= 0):
-            await super().set_left_speed(motor_speed)
-        else:
-            await super().set_right_speed(motor_speed)
-        await super().turn_right(degrees)
+            return self.pose
 
     async def dock(self):
         """Request a docking action."""
@@ -392,11 +177,10 @@ class Create3(Robot):
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(Packet(dev, cmd, inc))
-        # packet = await completer.wait(60)
         packet = await completer.wait(self.DEFAULT_TIMEOUT)
         if packet:
             unpacked = unpack('>IBBHHHHH', packet.payload)
-            return {'timestamp': unpacked[0], 'status': unpacked[1], 'result': unpacked[2]}
+            return {'timestamp': unpacked[0], 'status': self.DockStatus(unpacked[1]), 'result': self.DockResult(unpacked[2])}
         return None
 
     async def undock(self):
@@ -405,15 +189,15 @@ class Create3(Robot):
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(Packet(dev, cmd, inc))
-        # packet = await completer.wait(30)
         packet = await completer.wait(self.DEFAULT_TIMEOUT)
         if packet:
             unpacked = unpack('>IBBHHHHH', packet.payload)
-            return {'timestamp': unpacked[0], 'status': unpacked[1], 'result': unpacked[2]}
+            return {'timestamp': unpacked[0], 'status': self.DockStatus(unpacked[1]), 'result': self.DockResult(unpacked[2])}
         return None
 
     async def get_docking_values(self):
         """Get docking values."""
+        # TODO: Harmonize access with cached value from events
         dev, cmd, inc = 19, 1, self.inc
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
@@ -437,6 +221,21 @@ class Create3(Robot):
             else:
                 major = chr(major)
 
-            return '.'.join([major, str(ver[2]), str(ver[9])])
+            return '.'.join([major, str(minor), str(patch)])
         except IndexError:
             return None
+
+    def get_touch_sensors_cached(self):
+        '''Returns list of most recently seen touch sensor state, or None if no event has happened yet'''
+        return super().get_touch_sensors_cached()[0:2]
+
+    def get_cliff_sensors_cached(self):
+        '''Returns tuple of most recently seen cliff sensor state'''
+        return (self.cliff_sensor.left, self.cliff_sensor.front_left,
+                self.cliff_sensor.front_right, self.cliff_sensor.right)
+
+    async def get_cliff_sensors(self):
+        '''Returns tuple of most recently seen cliff sensor state.
+           If there were a protocol getter, this would await that response when the cache is empty.
+        '''
+        return self.get_cliff_sensors_cached()

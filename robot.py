@@ -162,6 +162,8 @@ class Robot:
         # Check if packet is an event.
         key = (packet.dev, packet.cmd)
         if key in self._events.keys():
+            if self._loop.is_closed:
+                self._loop = asyncio.get_event_loop()
             self._loop.create_task(self._events[key](packet))
             return
 
@@ -194,7 +196,6 @@ class Robot:
         for event in self._when_play:
             print("The event now is:", event)
             if not event.is_running:
-                # print(event.task)
                 await self._loop.create_task(event.task(self))
 
         # Only in systems that are not events based, the packets must be polled.
@@ -467,7 +468,7 @@ class Robot:
         speed = bound(int(speed * 10), -self.MAX_SPEED, self.MAX_SPEED)
         await self._backend.write_packet(Packet(1, 7, self.inc, pack('>i', speed)))
 
-    async def move(self, distance: Union[int, float]):
+    async def move_helper(self, distance: Union[int, float]):
         """Drive distance in centimeters."""
         if self._disable_motors:
             return
@@ -476,12 +477,21 @@ class Robot:
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(packet)
-        packet = await completer.wait(self.DEFAULT_TIMEOUT + int(abs(distance) / 10))
+        packet = await completer.wait(self.DEFAULT_TIMEOUT + int(abs(distance) / 50))
         if self.USE_ROBOT_POSE and packet:
             return self.pose.set_from_packet(packet)
         else:
             self.pose.move(distance)
             return self.pose
+    
+    def move(self, distance: Union[int, float]):
+        if self._loop.is_closed():
+            self._loop = asyncio.get_event_loop()
+        # event = Event(True, self.move_helper(distance))
+        # self._loop.run_until_complete(event.task(self))
+        self._loop.run_until_complete(self.move_helper(distance))
+        self._loop.close()
+
 
     async def turn(self, direction: int, angle: Union[int, float]):
         """Rotate angle in degrees."""
@@ -499,18 +509,32 @@ class Robot:
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(packet)
-        packet = await completer.wait(self.DEFAULT_TIMEOUT + int(abs(angle) / 100))
+        packet = await completer.wait(self.DEFAULT_TIMEOUT-2 + int(abs(angle) / 100))
         if self.USE_ROBOT_POSE and packet:
             return self.pose.set_from_packet(packet)
         else:
             self.pose.turn_left(-angle)
             return self.pose
 
-    async def turn_left(self, angle: Union[int, float]):
+    async def turn_left_helper(self, angle: Union[int, float]):
         return await self.turn(self.Dir.LEFT, angle)
+    
+    def turn_left(self, angle: Union[int, float]):
+        # event = Event(True, self.turn_left_helper(angle))
+        # event.task(self)
+        if self._loop.is_closed():
+            self._loop = asyncio.get_event_loop()
+        self._loop.run_until_complete(self.turn_left_helper(angle))
+        self._loop.close()
 
-    async def turn_right(self, angle: Union[int, float]):
+    async def turn_right_helper(self, angle: Union[int, float]):
         return await self.turn(self.Dir.RIGHT, angle)
+    
+    def turn_right(self, angle: Union[int, float]):
+        if self._loop.is_closed():
+            self._loop = asyncio.get_event_loop()
+        self._loop.run_until_complete(self.turn_right_helper(angle))
+        self._loop.close()
 
     async def reset_position(self): # this is the name of the command in the protocol doc
         return await self.reset_navigation()

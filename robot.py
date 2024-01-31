@@ -133,8 +133,8 @@ class Robot:
     async def _finished(self):
         """Ensures that the robot resets its state when the program is finished neatly."""
         if self._run and await self._backend.is_connected():
-            await self.stop()
-            await self.disconnect()
+            # await self.stop()
+            # await self.disconnect()
             await self._backend.disconnect()
 
     @property
@@ -196,10 +196,11 @@ class Robot:
             if not event.is_running:
                 # print(event.task)
                 await self._loop.create_task(event.task(self))
+        print("finish all events")
 
         # Only in systems that are not events based, the packets must be polled.
-        if not callable(self.on_data_reception):
-            await self._read_packets()
+        # if not callable(self.on_data_reception):
+        #     await self._read_packets()
 
     # Event Handlers.
 
@@ -330,6 +331,7 @@ class Robot:
                 self._main_task = self._loop.create_task(self._main())
             else:
                 self._loop.run_until_complete(self._main())
+                print("_main function completed")
         except KeyboardInterrupt:
             print('Caught keyboard interrupt exception, program stopping.')
             self._run = False
@@ -342,8 +344,9 @@ class Robot:
                     task.cancel()
 
             if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
-                self._loop.run_until_complete(self._finished())
-                self._loop.close()
+                # self._loop.run_until_complete(self._finished())
+                self._run = False
+                # self._loop.close()
 
     async def stop(self):
         """Stop and reset robot."""
@@ -476,7 +479,7 @@ class Robot:
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(packet)
-        packet = await completer.wait(self.DEFAULT_TIMEOUT + int(abs(distance) / 10))
+        packet = await completer.wait(self.DEFAULT_TIMEOUT-2 + int(abs(distance) / 10))
         if self.USE_ROBOT_POSE and packet:
             return self.pose.set_from_packet(packet)
         else:
@@ -499,7 +502,7 @@ class Robot:
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(packet)
-        packet = await completer.wait(self.DEFAULT_TIMEOUT + int(abs(angle) / 100))
+        packet = await completer.wait(self.DEFAULT_TIMEOUT-2 + int(abs(angle) / 100))
         if self.USE_ROBOT_POSE and packet:
             return self.pose.set_from_packet(packet)
         else:

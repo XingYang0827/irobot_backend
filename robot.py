@@ -202,6 +202,53 @@ class Robot:
         # if not callable(self.on_data_reception):
         #     await self._read_packets()
 
+    async def _move(self, distance):
+        # Connect to robot.
+        if not await self._backend.is_connected():
+            await self._backend.connect()
+        self._run = True
+
+        # Always resets the robot's state before starting the user's program.
+        await self.stop()
+
+        # The when_play event is always triggered first.
+        await self._loop.create_task(self.move_helper(distance))
+        print("finish all events")
+
+        # Only in systems that are not events based, the packets must be polled.
+        # if not callable(self.on_data_reception):
+        #     await self._read_packets()
+
+    def move(self, distance):
+        """Start the program."""
+        if self._run:
+            # Calling play() more than once makes the program unpredicable.
+            print('🟧 Robot program already running')
+            return
+
+        try:
+            # if hasattr(self._loop, 'is_running') and self._loop.is_running():
+            #     self._main_task = self._loop.create_task(self._main())
+            #     print("_main function created")
+            # else:
+            self._loop.run_until_complete(self.move_helper(distance))
+            print("_main function completed")
+        except KeyboardInterrupt:
+            print('Caught keyboard interrupt exception, program stopping.')
+            self._run = False
+        except SystemExit:
+            self._run = False
+        finally:
+            # This fails on the web version, so determining the platform is crucial:
+            if not is_web():
+                for task in asyncio.all_tasks(self._loop):
+                    task.cancel()
+
+            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+                # self._loop.run_until_complete(self._finished())
+                self._run = False
+                # self._loop.close()
+
     # Event Handlers.
 
     async def _when_stop_button_handler(self, packet: Packet):
@@ -319,34 +366,35 @@ class Robot:
 
     # Commands.
 
-    def play(self):
-        """Start the program."""
-        if self._run:
-            # Calling play() more than once makes the program unpredicable.
-            print('🟧 Robot program already running')
-            return
+    # def play(self):
+    #     """Start the program."""
+    #     if self._run:
+    #         # Calling play() more than once makes the program unpredicable.
+    #         print('🟧 Robot program already running')
+    #         return
 
-        try:
-            if hasattr(self._loop, 'is_running') and self._loop.is_running():
-                self._main_task = self._loop.create_task(self._main())
-            else:
-                self._loop.run_until_complete(self._main())
-                print("_main function completed")
-        except KeyboardInterrupt:
-            print('Caught keyboard interrupt exception, program stopping.')
-            self._run = False
-        except SystemExit:
-            self._run = False
-        finally:
-            # This fails on the web version, so determining the platform is crucial:
-            if not is_web():
-                for task in asyncio.all_tasks(self._loop):
-                    task.cancel()
+    #     try:
+    #         if hasattr(self._loop, 'is_running') and self._loop.is_running():
+    #             self._main_task = self._loop.create_task(self._main())
+    #             print("_main function created")
+    #         else:
+    #             self._loop.run_until_complete(self._main())
+    #             print("_main function completed")
+    #     except KeyboardInterrupt:
+    #         print('Caught keyboard interrupt exception, program stopping.')
+    #         self._run = False
+    #     except SystemExit:
+    #         self._run = False
+    #     finally:
+    #         # This fails on the web version, so determining the platform is crucial:
+    #         if not is_web():
+    #             for task in asyncio.all_tasks(self._loop):
+    #                 task.cancel()
 
-            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
-                # self._loop.run_until_complete(self._finished())
-                self._run = False
-                # self._loop.close()
+    #         if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+    #             # self._loop.run_until_complete(self._finished())
+    #             self._run = False
+    #             # self._loop.close()
 
     async def stop(self):
         """Stop and reset robot."""
@@ -470,7 +518,7 @@ class Robot:
         speed = bound(int(speed * 10), -self.MAX_SPEED, self.MAX_SPEED)
         await self._backend.write_packet(Packet(1, 7, self.inc, pack('>i', speed)))
 
-    async def move(self, distance: Union[int, float]):
+    async def move_helper(self, distance: Union[int, float]):
         """Drive distance in centimeters."""
         if self._disable_motors:
             return

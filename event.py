@@ -20,10 +20,14 @@ async def hand_over():
 class Event:
     """ This class will be used for robots other than Root, thus the naming """
 
-    def __init__(self, condition, task):
-        self.condition = condition
+    # def __init__(self, condition, task):
+    #     self.condition = condition
+    #     self.task = task
+    #     self.is_running = False
+    #     # self.prev_data = None  # can be used for filtering while triggering if needed
+
+    def __init__(self,  task):
         self.task = task
-        self.is_running = False
         # self.prev_data = None  # can be used for filtering while triggering if needed
 
     async def run(self, device):

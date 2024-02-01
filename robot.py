@@ -498,7 +498,9 @@ class Robot:
         await self.stop()
 
         # The when_play event is always triggered first.
-        await self._loop.create_task(Event(self.move_helper).task(distance))
+        # await self._loop.create_task(event)
+        event = Event(await self.move_helper(distance))
+        # await self._loop.create_task(event.task(self))
         print("finish _move")
 
     def move(self, distance):
@@ -566,7 +568,8 @@ class Robot:
         await self.stop()
 
         # The when_play event is always triggered first.
-        await self._loop.create_task(Event(self.turn_left_helper).task(angle))
+        event = Event(await self.turn_left_helper(angle))
+        # await self._loop.create_task(event.task(self))
         print("finish _turn_left")
 
     def turn_left(self, angle):
@@ -605,8 +608,10 @@ class Robot:
         await self.stop()
 
         # The when_play event is always triggered first.
-        await self._loop.create_task(Event(self.turn_right_helper).task(angle))
-        print("finish _turn_left")
+
+        event = Event(await self.turn_right_helper(angle))
+        # await self._loop.create_task(event.task(self))
+        print("finish _turn_right")
 
     def turn_right(self, angle):
         """Start the program."""

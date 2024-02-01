@@ -202,52 +202,6 @@ class Robot:
         # if not callable(self.on_data_reception):
         #     await self._read_packets()
 
-    async def _move(self, distance):
-        # Connect to robot.
-        if not await self._backend.is_connected():
-            await self._backend.connect()
-        self._run = True
-
-        # Always resets the robot's state before starting the user's program.
-        await self.stop()
-
-        # The when_play event is always triggered first.
-        await self._loop.create_task(self.move_helper(distance))
-        print("finish all events")
-
-        # Only in systems that are not events based, the packets must be polled.
-        # if not callable(self.on_data_reception):
-        #     await self._read_packets()
-
-    def move(self, distance):
-        """Start the program."""
-        if self._run:
-            # Calling play() more than once makes the program unpredicable.
-            print('🟧 Robot program already running')
-            return
-
-        try:
-            # if hasattr(self._loop, 'is_running') and self._loop.is_running():
-            #     self._main_task = self._loop.create_task(self._main())
-            #     print("_main function created")
-            # else:
-            self._loop.run_until_complete(self.move_helper(distance))
-            print("_main function completed")
-        except KeyboardInterrupt:
-            print('Caught keyboard interrupt exception, program stopping.')
-            self._run = False
-        except SystemExit:
-            self._run = False
-        finally:
-            # This fails on the web version, so determining the platform is crucial:
-            if not is_web():
-                for task in asyncio.all_tasks(self._loop):
-                    task.cancel()
-
-            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
-                # self._loop.run_until_complete(self._finished())
-                self._run = False
-                # self._loop.close()
 
     # Event Handlers.
 
@@ -527,12 +481,51 @@ class Robot:
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(packet)
-        packet = await completer.wait(self.DEFAULT_TIMEOUT-2 + int(abs(distance) / 10))
+        packet = await completer.wait(self.DEFAULT_TIMEOUT + int(abs(distance) / 50))
         if self.USE_ROBOT_POSE and packet:
             return self.pose.set_from_packet(packet)
         else:
             self.pose.move(distance)
             return self.pose
+        
+    async def _move(self, distance):
+        # Connect to robot.
+        if not await self._backend.is_connected():
+            await self._backend.connect()
+        self._run = True
+
+        # Always resets the robot's state before starting the user's program.
+        await self.stop()
+
+        # The when_play event is always triggered first.
+        await self._loop.create_task(Event(self.move_helper).task(distance))
+        print("finish _move")
+
+    def move(self, distance):
+        """Start the program."""
+        if self._run:
+            # Calling play() more than once makes the program unpredicable.
+            print('🟧 Robot program already running')
+            return
+
+        try:
+            self._loop.run_until_complete(self._move(distance))
+            print("move function completed")
+        except KeyboardInterrupt:
+            print('Caught keyboard interrupt exception, program stopping.')
+            self._run = False
+        except SystemExit:
+            self._run = False
+        finally:
+            # This fails on the web version, so determining the platform is crucial:
+            if not is_web():
+                for task in asyncio.all_tasks(self._loop):
+                    task.cancel()
+
+            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+                # self._loop.run_until_complete(self._finished())
+                self._run = False
+                # self._loop.close()
 
     async def turn(self, direction: int, angle: Union[int, float]):
         """Rotate angle in degrees."""
@@ -557,11 +550,89 @@ class Robot:
             self.pose.turn_left(-angle)
             return self.pose
 
-    async def turn_left(self, angle: Union[int, float]):
+    async def turn_left_helper(self, angle: Union[int, float]):
         return await self.turn(self.Dir.LEFT, angle)
 
-    async def turn_right(self, angle: Union[int, float]):
+    async def turn_right_helper(self, angle: Union[int, float]):
         return await self.turn(self.Dir.RIGHT, angle)
+    
+    async def _turn_left(self, angle):
+        # Connect to robot.
+        if not await self._backend.is_connected():
+            await self._backend.connect()
+        self._run = True
+
+        # Always resets the robot's state before starting the user's program.
+        await self.stop()
+
+        # The when_play event is always triggered first.
+        await self._loop.create_task(Event(self.turn_left_helper).task(angle))
+        print("finish _turn_left")
+
+    def turn_left(self, angle):
+        """Start the program."""
+        if self._run:
+            # Calling play() more than once makes the program unpredicable.
+            print('🟧 Robot program already running')
+            return
+
+        try:
+            self._loop.run_until_complete(self._turn_left(angle))
+            print("turn left function completed")
+        except KeyboardInterrupt:
+            print('Caught keyboard interrupt exception, program stopping.')
+            self._run = False
+        except SystemExit:
+            self._run = False
+        finally:
+            # This fails on the web version, so determining the platform is crucial:
+            if not is_web():
+                for task in asyncio.all_tasks(self._loop):
+                    task.cancel()
+
+            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+                # self._loop.run_until_complete(self._finished())
+                self._run = False
+                # self._loop.close()
+
+    async def _turn_right(self, angle):
+        # Connect to robot.
+        if not await self._backend.is_connected():
+            await self._backend.connect()
+        self._run = True
+
+        # Always resets the robot's state before starting the user's program.
+        await self.stop()
+
+        # The when_play event is always triggered first.
+        await self._loop.create_task(Event(self.turn_right_helper).task(angle))
+        print("finish _turn_left")
+
+    def turn_right(self, angle):
+        """Start the program."""
+        if self._run:
+            # Calling play() more than once makes the program unpredicable.
+            print('🟧 Robot program already running')
+            return
+
+        try:
+            self._loop.run_until_complete(self._turn_right(angle))
+            print("turn right function completed")
+        except KeyboardInterrupt:
+            print('Caught keyboard interrupt exception, program stopping.')
+            self._run = False
+        except SystemExit:
+            self._run = False
+        finally:
+            # This fails on the web version, so determining the platform is crucial:
+            if not is_web():
+                for task in asyncio.all_tasks(self._loop):
+                    task.cancel()
+
+            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+                # self._loop.run_until_complete(self._finished())
+                self._run = False
+                # self._loop.close()
 
     async def reset_position(self): # this is the name of the command in the protocol doc
         return await self.reset_navigation()

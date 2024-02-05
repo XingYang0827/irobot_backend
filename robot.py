@@ -181,26 +181,26 @@ class Robot:
             packet = await self._backend.read_packet()
             self._decode_packet(packet)
 
-    async def _main(self):
-        # Connect to robot.
-        if not await self._backend.is_connected():
-            await self._backend.connect()
-        self._run = True
+    # async def _main(self):
+    #     # Connect to robot.
+    #     if not await self._backend.is_connected():
+    #         await self._backend.connect()
+    #     self._run = True
 
-        # Always resets the robot's state before starting the user's program.
-        await self.stop()
+    #     # Always resets the robot's state before starting the user's program.
+    #     await self.stop()
 
-        # The when_play event is always triggered first.
-        for event in self._when_play:
-            print("The event now is:", event)
-            if not event.is_running:
-                # print(event.task)
-                await self._loop.create_task(event.task(self))
-        print("finish all events")
+    #     # The when_play event is always triggered first.
+    #     for event in self._when_play:
+    #         print("The event now is:", event)
+    #         if not event.is_running:
+    #             # print(event.task)
+    #             await self._loop.create_task(event.task(self))
+    #     print("finish all events")
 
-        # Only in systems that are not events based, the packets must be polled.
-        # if not callable(self.on_data_reception):
-        #     await self._read_packets()
+    #     # Only in systems that are not events based, the packets must be polled.
+    #     # if not callable(self.on_data_reception):
+    #     #     await self._read_packets()
 
 
     # Event Handlers.
@@ -493,15 +493,9 @@ class Robot:
         if not await self._backend.is_connected():
             await self._backend.connect()
         self._run = True
-
         # Always resets the robot's state before starting the user's program.
         await self.stop()
-
-        # The when_play event is always triggered first.
-        # await self._loop.create_task(event)
         event = Event(await self.move_helper(distance))
-        # await self._loop.create_task(event.task(self))
-        print("finish _move")
 
     def move(self, distance):
         """Start the program."""
@@ -512,7 +506,6 @@ class Robot:
 
         try:
             self._loop.run_until_complete(self._move(distance))
-            print("move function completed")
         except KeyboardInterrupt:
             print('Caught keyboard interrupt exception, program stopping.')
             self._run = False
@@ -525,9 +518,7 @@ class Robot:
                     task.cancel()
 
             if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
-                # self._loop.run_until_complete(self._finished())
                 self._run = False
-                # self._loop.close()
 
     async def turn(self, direction: int, angle: Union[int, float]):
         """Rotate angle in degrees."""
@@ -570,7 +561,6 @@ class Robot:
         # The when_play event is always triggered first.
         event = Event(await self.turn_left_helper(angle))
         # await self._loop.create_task(event.task(self))
-        print("finish _turn_left")
 
     def turn_left(self, angle):
         """Start the program."""
@@ -581,7 +571,6 @@ class Robot:
 
         try:
             self._loop.run_until_complete(self._turn_left(angle))
-            print("turn left function completed")
         except KeyboardInterrupt:
             print('Caught keyboard interrupt exception, program stopping.')
             self._run = False
@@ -606,12 +595,7 @@ class Robot:
 
         # Always resets the robot's state before starting the user's program.
         await self.stop()
-
-        # The when_play event is always triggered first.
-
         event = Event(await self.turn_right_helper(angle))
-        # await self._loop.create_task(event.task(self))
-        print("finish _turn_right")
 
     def turn_right(self, angle):
         """Start the program."""
@@ -622,7 +606,6 @@ class Robot:
 
         try:
             self._loop.run_until_complete(self._turn_right(angle))
-            print("turn right function completed")
         except KeyboardInterrupt:
             print('Caught keyboard interrupt exception, program stopping.')
             self._run = False
@@ -635,9 +618,96 @@ class Robot:
                     task.cancel()
 
             if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
-                # self._loop.run_until_complete(self._finished())
                 self._run = False
-                # self._loop.close()
+
+        
+    async def dock_helper(self):
+        """Request a docking action."""
+        dev, cmd, inc = 1, 19, self.inc
+        completer = Completer()
+        self._responses[(dev, cmd, inc)] = completer
+        await self._backend.write_packet(Packet(dev, cmd, inc))
+        packet = await completer.wait(30)
+        if packet:
+            unpacked = unpack('>IBBHHHHH', packet.payload)
+            # return {'timestamp': unpacked[0], 'status': self.DockStatus(unpacked[1]), 'result': self.DockResult(unpacked[2])}
+        return None
+    
+    async def _dock(self):
+        # Connect to robot.
+        if not await self._backend.is_connected():
+            await self._backend.connect()
+        self._run = True
+
+        # Always resets the robot's state before starting the user's program.
+        await self.stop()
+        event = Event(await self.dock_helper())
+
+    def dock(self):
+        """Start the program."""
+        if self._run:
+            # Calling play() more than once makes the program unpredicable.
+            print('🟧 Robot program already running')
+            return
+
+        try:
+            self._loop.run_until_complete(self._dock())
+        except KeyboardInterrupt:
+            print('Caught keyboard interrupt exception, program stopping.')
+            self._run = False
+        except SystemExit:
+            self._run = False
+        finally:
+            # This fails on the web version, so determining the platform is crucial:
+            if not is_web():
+                for task in asyncio.all_tasks(self._loop):
+                    task.cancel()
+            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+                self._run = False
+
+    async def undock_helper(self):
+        """Request an undocking action."""
+        dev, cmd, inc = 1, 20, self.inc
+        completer = Completer()
+        self._responses[(dev, cmd, inc)] = completer
+        await self._backend.write_packet(Packet(dev, cmd, inc))
+        packet = await completer.wait(6)
+        if packet:
+            unpacked = unpack('>IBBHHHHH', packet.payload)
+            # return {'timestamp': unpacked[0], 'status': self.DockStatus(unpacked[1]), 'result': self.DockResult(unpacked[2])}
+        return None
+    
+    async def _undock(self):
+        # Connect to robot.
+        if not await self._backend.is_connected():
+            await self._backend.connect()
+        self._run = True
+
+        # Always resets the robot's state before starting the user's program.
+        await self.stop()
+        event = Event(await self.undock_helper())
+
+    def undock(self):
+        """Start the program."""
+        if self._run:
+            # Calling play() more than once makes the program unpredicable.
+            print('🟧 Robot program already running')
+            return
+
+        try:
+            self._loop.run_until_complete(self._undock())
+        except KeyboardInterrupt:
+            print('Caught keyboard interrupt exception, program stopping.')
+            self._run = False
+        except SystemExit:
+            self._run = False
+        finally:
+            # This fails on the web version, so determining the platform is crucial:
+            if not is_web():
+                for task in asyncio.all_tasks(self._loop):
+                    task.cancel()
+            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+                self._run = False
 
     async def reset_position(self): # this is the name of the command in the protocol doc
         return await self.reset_navigation()

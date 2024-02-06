@@ -450,13 +450,49 @@ class Robot:
         packet = await completer.wait(self.DEFAULT_TIMEOUT)
         return (unpack(">H", packet.payload[4:6])[0], packet.payload[6]) if packet else (0, 0)
 
-    async def set_wheel_speeds(self, left: Union[int, float], right: Union[int, float]):
+    async def set_wheel_speeds_helper(self, left: Union[int, float], right: Union[int, float]):
         """Set motor speed in cm/s."""
         if self._disable_motors:
             return
+        # dev, cmd, inc = 1, 4, self.inc
+        # completer = Completer()
+        # self._responses[(dev, cmd, inc)] = completer
         left = bound(int(left * 10), -self.MAX_SPEED, self.MAX_SPEED)
         right = bound(int(right * 10), -self.MAX_SPEED, self.MAX_SPEED)
         await self._backend.write_packet(Packet(1, 4, self.inc, pack('>ii', left, right)))
+
+    async def _set_wheel_speeds(self,left: Union[int, float], right: Union[int, float]):
+        # Connect to robot.
+        if not await self._backend.is_connected():
+            await self._backend.connect()
+        self._run = True
+
+        # Always resets the robot's state before starting the user's program.
+        await self.stop()
+        event = Event(await self.set_wheel_speeds_helper(left,right))
+
+    def set_wheel_speeds(self, left: Union[int, float], right: Union[int, float]):
+        """Start the program."""
+        if self._run:
+            # Calling play() more than once makes the program unpredicable.
+            print('🟧 Robot program already running')
+            return
+
+        try:
+            self._loop.run_until_complete(self._set_wheel_speeds(left,right))
+        except KeyboardInterrupt:
+            print('Caught keyboard interrupt exception, program stopping.')
+            self._run = False
+        except SystemExit:
+            self._run = False
+        finally:
+            # This fails on the web version, so determining the platform is crucial:
+            if not is_web():
+                for task in asyncio.all_tasks(self._loop):
+                    task.cancel()
+
+            if not hasattr(self._loop, 'is_running') or not self._loop.is_running():
+                self._run = False
 
     async def set_left_speed(self, speed: Union[int, float]):
         """Set left motor speed in cm/s."""
@@ -481,23 +517,42 @@ class Robot:
         completer = Completer()
         self._responses[(dev, cmd, inc)] = completer
         await self._backend.write_packet(packet)
-        packet = await completer.wait(self.DEFAULT_TIMEOUT + int(abs(distance) / 50))
+        packet = await completer.wait(self.DEFAULT_TIMEOUT-2 + int(abs(distance) / 10))
         if self.USE_ROBOT_POSE and packet:
             return self.pose.set_from_packet(packet)
         else:
             self.pose.move(distance)
             return self.pose
         
-    async def _move(self, distance):
+    async def _move(self, distance, speed):
         # Connect to robot.
         if not await self._backend.is_connected():
             await self._backend.connect()
         self._run = True
         # Always resets the robot's state before starting the user's program.
         await self.stop()
-        event = Event(await self.move_helper(distance))
+        # event = Event(await self.move_helper(distance))
+        # Calculate the number of steps based on the update interval
+        piece_distance = 10
+        times = int(distance/piece_distance)
+        left_distance = distance - times*piece_distance
 
-    def move(self, distance):
+        print("times:", times)
+        print("left distance:", left_distance)
+
+        for times in range(piece_distance):
+            # Adjust speed and move in smaller intervals
+            speed_task = asyncio.ensure_future(self.set_wheel_speeds_helper(speed, speed))
+            move_task = asyncio.ensure_future(self.move_helper(piece_distance))
+            # Wait for both tasks to complete
+            await asyncio.gather(move_task, speed_task)
+
+        speed_task = asyncio.ensure_future(self.set_wheel_speeds_helper(speed, speed))
+        move_task = asyncio.ensure_future(self.move_helper(left_distance))
+        await asyncio.gather(move_task, speed_task)
+        await self.stop()
+
+    def move(self, distance, speed):
         """Start the program."""
         if self._run:
             # Calling play() more than once makes the program unpredicable.
@@ -505,7 +560,7 @@ class Robot:
             return
 
         try:
-            self._loop.run_until_complete(self._move(distance))
+            self._loop.run_until_complete(self._move(distance, speed))
         except KeyboardInterrupt:
             print('Caught keyboard interrupt exception, program stopping.')
             self._run = False
